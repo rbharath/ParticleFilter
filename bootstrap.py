@@ -20,42 +20,67 @@ out = "rand.png"
 
 def parse_args():
     parser = OptionParser()
-    parser.add_option("-T", dest="T",
+    parser.add_option("-T", "--time", dest="T",
                       help="Time", action="store",
                       type="int", default=100)
     parser.add_option("-N", dest="N",
                       help="Num Particle", action="store",
                       type="int", default=1000)
+    # These options provide choice of parameters
     parser.add_option("--low", dest="low",
-                      help="lower limit", action="store",
+                      help="Param: lower limit", action="store",
                       type="int", default=0)
     parser.add_option("--high", dest="high",
-                      help="higher limit", action="store",
+                      help="Param: higher limit", action="store",
                       type="int", default=100)
     parser.add_option("--beta", dest="beta",
-                      help="velocity", action="store",
+                      help="Param: velocity", action="store",
                       type="float", default=5)
     parser.add_option("--sigma", dest="sigma",
-                      help="Variance", action="store",
+                      help="Param: Variance", action="store",
                       type="float", default=1)
-    parser.add_option("--noisy_linear", dest="noisy_linear",
-                      help="noisy linear motion", action="store_true",
-                      default=False)
-    parser.add_option("--gaussian", dest="gaussian",
-                      help="gaussian noise", action="store_true",
-                      default=False)
+    # These options provide choice of model
+    parser.add_option("--model", dest="model",
+                      help="noisy_linear, gaussian",
+                      type="string", action="store")
     parser.add_option("--plot_theta", dest="plot_theta",
-                      help="graph the hidden true state theta",
+                      help="Plot: graph the hidden true state theta",
                       default=False, action="store_true")
     parser.add_option("--plot_z", dest="plot_z",
-                      help="graph the noisy evidence z",
+                      help="Plot: graph the noisy evidence z",
                       default=False, action="store_true")
     parser.add_option("--plot_thetahat", dest="plot_thetahat",
-                      help="graph the inferred true state thetahat",
+                      help="Plot: graph the inferred true state thetahat",
+                      default=False, action="store_true")
+    # The following options control various features of graphed particles
+    parser.add_option("--filter", dest="filter",
+                      help="Particles: show last time step particle estimate",
+                      default=False, action="store_true")
+    parser.add_option("--expectation", dest="expectation",
+                      help="Particles: show the expectation of particles",
                       default=False, action="store_true")
 
     (options, args) = parser.parse_args()
     return options
+
+def path_expectation(particles, options):
+    """ Given a list of particles, each of which represents a path
+        in R^2, compute the expectation path.
+    """
+    e = []
+    if len(particles) == 0:
+        return None
+    for i in range(options.T):
+        xavg = 0
+        yavg = 0
+        for p,logw in particles:
+            x,y = p[i]
+            xavg += x
+            yavg += y
+        xavg = float(xavg) / len(particles)
+        yavg = float(yavg) / len(particles)
+        e.append((xavg, yavg))
+    return e
 
 class GaussianNoise:
     """ Models a static point with Gaussian Noise coming
@@ -77,7 +102,7 @@ class GaussianNoise:
         y = random.uniform(self.options.low, self.options.high)
         self.thetas.append((x,y))
 
-        for i in range(options.T-1):
+        for i in range(options.T):
             xnoise = random.gauss(x, self.options.sigma)
             ynoise = random.gauss(y, self.options.sigma)
             self.zs.append((xnoise, ynoise))
@@ -115,42 +140,52 @@ class GaussianNoise:
         plot_graph(self.zs, color)
 
     def plotParticles(self, particles, color):
-        for particle in particles:
-            plot_graph(particle, color)
+        if self.options.filter:
+            for (particle, logW) in particles:
+                plot_graph(particle[-1:], color)
+        elif self.options.expectation:
+            plot_graph(path_expectation(particles, self.options), color)
+        else:
+            for (particle, logW) in particles:
+                plot_graph(particle, color)
 
 class NoisyLinear:
     """ Models a linearly moving particle with gaussian noise in
         observations.
 
-        X_0 = Uniform(low, high)
-        Y_0 = Uniform(low, high)
-        V_0 = Uniform(0,beta)
-        W_0 = Uniform(0,beta)
+        x_0 = Uniform(low, high)
+        x_0 = Uniform(low, high)
+        vx = Uniform(0,beta)
+        vy = Uniform(0,beta)
 
-        X_n = X_{n-1} + v_{n-1}
-        Y_n = Y_{n-1} + w_{n-1}
-        Z_n = (X_n + N(0,sigma), Y_n + N(0, sigma))
+        x_n = x_{n-1} + vx
+        y_n = y_{n-1} + vy
+        Z_n = (x_n + N(0,sigma), y_n + N(0, sigma))
 
         Particle Format:
-        (V,W,X,Y)
+        (x,y)
+
+        This class assumes the evolution parameters (velocities) are known
+        to the particle filter. The tracking problem becomes much trickier
+        when parameters are unknown.
     """
     def __init__(self, options):
         self.options = options
         self.thetas = []
         self.zs = []
-        v = random.random() * options.beta
-        w = random.random() * options.beta
+        self.vx = random.random() * options.beta
+        self.vy = random.random() * options.beta
         prev = 0
         for i in range(options.T):
             if i == 0:
-                xprev = random.uniform(options.low, options.high)
-                yprev = random.uniform(options.low, options.high)
+                x = random.uniform(options.low, options.high)
+                y = random.uniform(options.low, options.high)
             else:
-                xprev = self.thetas[i-1][0]
-                yprev = self.thetas[i-1][1]
-            x = xprev + v
-            y = yprev + w
-            self.thetas.append((v,w, x,y))
+                x = self.thetas[-1:][0][0]
+                y = self.thetas[-1:][0][1]
+            x = x + self.vx
+            y = y + self.vy
+            self.thetas.append((x,y))
             self.zs.append((x + random.gauss(0, options.sigma),
                             y + random.gauss(0, options.sigma)))
 
@@ -158,44 +193,44 @@ class NoisyLinear:
         """ The prior distribution on particles for particle filtering
             algorithms.
         """
-        V = random.random() * self.options.beta
-        W = random.random() * self.options.beta
-        X = random.uniform(self.options.low, self.options.high)
-        Y = random.uniform(self.options.low, self.options.high)
-        return (V,W,X,Y)
+        x = random.uniform(self.options.low, self.options.high)
+        y = random.uniform(self.options.low, self.options.high)
+        return (x,y)
 
     def transition(self, theta):
         """ In This model, X_n and Y_n are determined completed by X_{n-1}, Y_{n-1}
-        and by the V and W.
+        and by self.vx and self.vy.
         """
-        (v,w,x,y) = theta
-        x_new = x + v
-        y_new = y + w
-        return (v,w,x_new, y_new)
+        (x,y) = theta
+        x = x + self.vx
+        y = y + self.vy
+        return (x, y)
 
     def logEvidenceWeight(self, theta, t):
         """ The log evidence weight is a product of Gaussians as in the
             GaussianNoise Example.
         """
-        (v,w,x,y) = theta
+        (x,y) = theta
         (zx, zy) = self.zs[t]
         ret = math.log(mlab.normpdf(zx, x, self.options.sigma))
         ret += math.log(mlab.normpdf(zy, y, self.options.sigma))
-        #print "zx: " + str(zx) + ", x: " + str(x)
-        #print "zy: " + str(zy) + ", y: " + str(y)
-        #print "logEvidenceWeight: " + str(ret)
         return ret
 
     def plotHidden(self, color):
-        plot_graph([(x,y) for (v,w,x,y) in self.thetas], color)
+        plot_graph(self.thetas, color)
 
     def plotNoisy(self, color):
         plot_graph(self.zs, color)
 
     def plotParticles(self, particles, color):
-        for particle, weight in particles:
-            plot_graph([(x,y) for (v,w,x,y) in particle])
-
+        if self.options.filter:
+            for (particle, logW) in particles:
+                plot_graph(particle[-1:], color)
+        elif self.options.expectation:
+            plot_graph(path_expectation(particles, self.options), color)
+        else:
+            for (particle, logW) in particles:
+                plot_graph(particle, color)
 
 class BootstrapFilter:
     """ Standard Bootstrap Particle Filter with No Extra Frills Added.
@@ -219,8 +254,8 @@ class BootstrapFilter:
             self.particles.append((particle, logWeight))
         # For each time step
         for t in range(self.T-1):
-            for pos in range(options.N):
-                (particle, logWeight) = self.particles[pos]
+            for j in range(options.N):
+                (particle, logWeight) = self.particles[j]
                 # transition draws theta_t from the proposal distribution given
                 # theta_0,.., theta_{t-1} and z_0, ..., z_t
                 # Typically, we just choose theta_t | theta_{t-1}
@@ -230,20 +265,18 @@ class BootstrapFilter:
                 # p(theta_t | theta_{t-1}), so we get a simple form for the weights
                 # w = p(z_t | theta_t)
                 logW = model.logEvidenceWeight(particle[t+1], t+1)
-                #print "t: " + str(t) + ", pos: " + str(pos) + ", logW: " +str(logW)
                 logWeight += logW
-                self.particles[pos] = (particle, logWeight)
-            # Not sure if this will cause underflow
+                self.particles[j] = (particle, logWeight)
+            # This causes underflow especially when parameters are unknown.
             Sum = sum([math.exp(logW) for (p, logW) in self.particles])
             norm_weights = [logW - math.log(Sum) for (p, logW) in self.particles]
-            #print "norm_weights: " + str(norm_weights)
             # Resample particles according to weights
+            # Todo: Explore better resampling methods
             new_particles = []
             for i in range(options.N):
                 r = random.random()
                 pos = 0
                 while True:
-                    #print "i: " + str(i) + ", pos: " + str(pos)
                     r -= math.exp(norm_weights[pos])
                     if r <= 0:
                         break
@@ -252,9 +285,6 @@ class BootstrapFilter:
                 p_copy = p[:]
                 new_particles.append((p_copy, math.log(1.0/options.N)))
             self.particles = new_particles
-
-    def plotPrediction(self, color):
-        model.plotParticles(self.particles)
 
 def plot_graph(zs, color):
     xs = [z[0] for z in zs]
@@ -271,9 +301,9 @@ def display_figure():
 if __name__ == "__main__":
     options = parse_args()
     # Generate Hidden and Evidence State
-    if options.noisy_linear:
+    if options.model == "noisy_linear":
         model = NoisyLinear(options)
-    elif options.gaussian:
+    elif options.model == "gaussian":
         model = GaussianNoise(options)
     # Perform Inference to Gain Hidden State
     infer = BootstrapFilter(model, options)
