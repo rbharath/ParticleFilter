@@ -10,7 +10,14 @@ from optparse import OptionParser
     particle filtering algorithms. The options allow me to run the various
     filters and gain an idea of how the various algorithms and models behave.
 
-    NEXT: Finish Bootstrap filter
+    Models:
+        1) Gaussian Noise
+        2) Noisy Linear
+    Filters:
+        1) BootstrapFilter
+
+    InProgress:
+        1) StochasticVolatility
 
     @author: rbharath@stanford
     @date: 9/7/2012
@@ -86,13 +93,16 @@ class GaussianNoise:
     """ Models a static point with Gaussian Noise coming
         in over time.
 
-        X = Uniform(low, high)
-        Y = Uniform(low, high)
-        X_n = N(X, sigma)
-        Y_n = N(Y, sigma)
+        Dom(x_i) = R
+        Dom(y_i) = R
+
+        x = Uniform(low, high)
+        y = Uniform(low, high)
+        x_n = N(x, sigma)
+        y_n = N(y, sigma)
 
         Particle Format
-        (X,Y)
+        (x,y)
     """
     def __init__(self, options):
         self.thetas = []
@@ -152,6 +162,9 @@ class GaussianNoise:
 class NoisyLinear:
     """ Models a linearly moving particle with gaussian noise in
         observations.
+
+        Dom(x_i) = R
+        Dom(y_i) = R
 
         x_0 = Uniform(low, high)
         x_0 = Uniform(low, high)
@@ -231,6 +244,21 @@ class NoisyLinear:
         else:
             for (particle, logW) in particles:
                 plot_graph(particle, color)
+
+class StochasticVolatility:
+    """ Stochastic Volatility model of the type used in financial
+        econometrics.
+
+        Dom(x_i) = R
+        Dom(y_i) = R
+
+        x_1 = N(0, sigma^2 / (1 - alpha^2))
+        v_n = N(0,1)
+        w_n = N(0,1)
+        x_n = alpha * x_{n-1} + sigma * v_n
+        y_n = beta * exp(x_n/2) * w_n
+    """
+    pass
 
 class BootstrapFilter:
     """ Standard Bootstrap Particle Filter with No Extra Frills Added.
