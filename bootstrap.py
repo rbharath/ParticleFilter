@@ -1,6 +1,7 @@
 import random
 import matplotlib.pyplot as plot
 import matplotlib.mlab as mlab
+import matplotlib.lines.Line2D as Line2D
 import subprocess
 import math
 from optparse import OptionParser
@@ -33,6 +34,14 @@ def parse_args():
     parser.add_option("-N", dest="N",
                       help="Num Particle", action="store",
                       type="int", default=1000)
+    # These options let us set the hidden state to make experimentation
+    # easier
+    parser.add_option("--x", dest="x",
+                      help="State: set value of x", action="store",
+                      type="float")
+    parser.add_option("--y", dest="y",
+                      help="State: set value of y", action="store",
+                      type="float")
     # These options provide choice of parameters
     parser.add_option("--low", dest="low",
                       help="Param: lower limit", action="store",
@@ -40,15 +49,21 @@ def parse_args():
     parser.add_option("--high", dest="high",
                       help="Param: higher limit", action="store",
                       type="int", default=100)
+    parser.add_option("--alpha", dest="alpha",
+                      help="Param: alpha", action="store",
+                      type="float", default=5)
     parser.add_option("--beta", dest="beta",
-                      help="Param: velocity", action="store",
+                      help="Param: beta", action="store",
                       type="float", default=5)
     parser.add_option("--sigma", dest="sigma",
                       help="Param: Variance", action="store",
                       type="float", default=1)
+    parser.add_option("--k", dest="k",
+                      help="Param: Number Hands", action="store",
+                      type="float", default=1)
     # These options provide choice of model
     parser.add_option("--model", dest="model",
-                      help="noisy_linear, gaussian",
+                      help="noisy_linear, gaussian, stochastic_volatility",
                       type="string", action="store")
     parser.add_option("--plot_theta", dest="plot_theta",
                       help="Plot: graph the hidden true state theta",
@@ -70,23 +85,40 @@ def parse_args():
     (options, args) = parser.parse_args()
     return options
 
-def path_expectation(particles, options):
+def path_expectation(particles, options, all_time=True):
     """ Given a list of particles, each of which represents a path
         in R^2, compute the expectation path.
+
+        If we just wish for the expectation of the final time step,
+        set all_time=False
     """
     e = []
     if len(particles) == 0:
         return None
-    for i in range(options.T):
-        xavg = 0
-        yavg = 0
+    #num_dimensions = len(particles[0])
+    p, logw = particles[0]
+    # each particle contains a time history. Take the 0th timestep
+    # data to undertand the dimensionality of the particle
+    num_dimensions = len(p[0])
+    if all_time:
+        for i in range(options.T):
+            avgs = [0] * num_dimensions
+            for p,logw in particles:
+                v = p[i]
+                for j in range(num_dimensions):
+                    avgs[j] += v[j]
+            for j in range(num_dimensions):
+                avgs[j] = float(avgs[j]) / len(particles)
+            e.append(tuple(avgs[:]))
+    else:
+        avgs = [0] * num_dimensions
         for p,logw in particles:
-            x,y = p[i]
-            xavg += x
-            yavg += y
-        xavg = float(xavg) / len(particles)
-        yavg = float(yavg) / len(particles)
-        e.append((xavg, yavg))
+            v = p[options.T - 1]
+            for j in range(num_dimensions):
+                avgs[j] += v[j]
+        for j in range(num_dimensions):
+            avgs[j] = float(avgs[j]) / len(particles)
+        e.append(tuple(avgs[:]))
     return e
 
 class GaussianNoise:
@@ -108,8 +140,14 @@ class GaussianNoise:
         self.thetas = []
         self.zs = []
         self.options = options
-        x = random.uniform(self.options.low, self.options.high)
-        y = random.uniform(self.options.low, self.options.high)
+        if options.x is None:
+            x = random.uniform(self.options.low, self.options.high)
+        else:
+            x = options.x
+        if options.y is None:
+            y = random.uniform(self.options.low, self.options.high)
+        else:
+            y = options.y
         self.thetas.append((x,y))
 
         for i in range(options.T):
@@ -125,12 +163,14 @@ class GaussianNoise:
         Y = random.uniform(self.options.low, self.options.high)
         return (X, Y)
 
-    def transition(self, theta):
-        """ The Gaussian Noise model is memory less, so we just sample from
-            the known static state.
+    def transition(self, thetahat):
+        """ The Gaussian Noise model is memory less, but we want to
+            keep information about whether our current location is good
+            or bad.
         """
-        Xnoise = random.gauss(self.thetas[0][0], self.options.sigma)
-        Ynoise = random.gauss(self.thetas[0][1], self.options.sigma)
+        (x, y) = thetahat
+        Xnoise = random.gauss(x, self.options.sigma)
+        Ynoise = random.gauss(y, self.options.sigma)
         return (Xnoise, Ynoise)
 
     def logEvidenceWeight(self, theta, t):
@@ -139,9 +179,13 @@ class GaussianNoise:
         """
         (x,y) = theta
         (zx, zy) = self.zs[t]
-        ret = math.log(mlab.normpdf(zx, x, self.options.sigma))
-        ret += math.log(mlab.normpdf(zy, y, self.options.sigma))
-        return ret
+        px = mlab.normpdf(zx, x, self.options.sigma)
+        py = mlab.normpdf(zy, y, self.options.sigma)
+        if px == 0 or py == 0:
+            return True, 0
+        else:
+            ret = math.log(px) + math.log(py)
+            return False, ret
 
     def plotHidden(self, color):
         plot_graph(self.thetas, color)
@@ -154,7 +198,8 @@ class GaussianNoise:
             for (particle, logW) in particles:
                 plot_graph(particle[-1:], color)
         elif self.options.expectation:
-            plot_graph(path_expectation(particles, self.options), color)
+            plot_graph(path_expectation(particles, self.options,
+                all_time=False), color)
         else:
             for (particle, logW) in particles:
                 plot_graph(particle, color)
@@ -225,9 +270,13 @@ class NoisyLinear:
         """
         (x,y) = theta
         (zx, zy) = self.zs[t]
-        ret = math.log(mlab.normpdf(zx, x, self.options.sigma))
-        ret += math.log(mlab.normpdf(zy, y, self.options.sigma))
-        return ret
+        px = mlab.normpdf(zx, x, self.options.sigma)
+        py = mlab.normpdf(zy, y, self.options.sigma)
+        if px == 0 or py == 0:
+            return True, 0
+        else:
+            ret = math.log(px) + math.log(py)
+            return False, ret
 
     def plotHidden(self, color):
         plot_graph(self.thetas, color)
@@ -245,6 +294,53 @@ class NoisyLinear:
             for (particle, logW) in particles:
                 plot_graph(particle, color)
 
+class ClockHands:
+    """ A toy example of a model that evolves at different time scales.
+        There are k clock hands. The base of the k-th clock hand is at the
+        tip of the (k-1)st clock hand. The k-th clock hand evolves at
+        rate 10^k. That is, we expect the k-th hand to transition 10^k
+        times per second.
+
+        Each hand is stored as a list of k angles, with represents the
+        angle of the k-th clock hand. The k-th clock hand is of length
+        2^-k.
+    """
+    def __init__(self, options):
+        self.options = options
+        self.thetas = []
+        self.zs = []
+        state = [0] * options.k
+        # Initialize the state to a random setting
+        for i in range(options.k):
+            state[i] = random.uniform(0, 2 * math.pi)
+        self.thetas.append(state)
+    def prior(self):
+        pass
+    def transition(self, theta):
+        pass
+    def logEvidenceWeight(self, theta, t):
+        pass
+    def plotHidden(self, color):
+        fig = plot.figure()
+        ax = fig.add_subplot(1,1,1)
+        if len(self.thetas) == 0:
+            return
+        state = self.thetas[0]
+        base = (0,0)
+        for i in range(self.options.k):
+            theta = state[i]
+            r = math.exp(2,-i)
+            new_base = (base[0] + r * math.cos(theta),
+                        base[1] + r * math.sin(theta))
+            ax.plot([base[0], new_base[0]], [base[1], new_base[1]])
+            base = new_base
+
+    def plotNoisy(self, color):
+        pass
+    def plotParticles(self, particles, color):
+        pass
+
+
 class StochasticVolatility:
     """ Stochastic Volatility model of the type used in financial
         econometrics.
@@ -258,7 +354,64 @@ class StochasticVolatility:
         x_n = alpha * x_{n-1} + sigma * v_n
         y_n = beta * exp(x_n/2) * w_n
     """
-    pass
+    def __init__(self, options):
+        self.thetas = []
+        self.zs = []
+        self.options = options
+        x = (random.gauss(0, float(options.sigma ** 2) /
+                float(1 + options.alpha **2)))
+        w = random.gauss(0,1)
+        y = options.beta * math.exp(float(x)/2) * w
+        self.thetas.append(x)
+        self.zs.append(y)
+
+        for i in range(options.T - 1):
+            x = self.thetas[-1:][0]
+            v = random.gauss(0,1)
+            w = random.gauss(0,1)
+            x = options.alpha * x + options.sigma * v
+            print "x: " + str(x)
+            y = options.beta * math.exp(float(x)/2) * w
+            self.thetas.append(x)
+            self.zs.append(y)
+
+    def prior(self):
+        x = (random.gauss(0, float(options.sigma ** 2)/
+                float(1 + options.alpha **2)))
+        return x
+
+    def transition(self, theta):
+        x = theta
+        v = random.gauss(0,1)
+        x = options.alpha * x + options.sigma * v
+        return x
+
+    def logEvidenceWeight(self, theta, t):
+        x = theta
+        y = self.zs[t]
+        py = mlab.normpdf(y,0, (options.beta**2) * math.exp(x))
+        if py == 0:
+            return True, 0
+        else:
+            return False, math.log(py)
+
+    def plotHidden(self, color):
+        pairs = zip(range(len(self.thetas)), self.thetas)
+        plot_graph(pairs, color)
+
+    def plotNoisy(self, color):
+        pairs = zip(range(len(self.zs)), self.zs)
+        plot_graph(pairs, color)
+
+    def plotParticles(self, particles, color):
+        if self.options.filter:
+            for (particle, logW) in particles:
+                plot_graph(particle[-1:], color)
+        elif self.options.expectation:
+            plot_graph(path_expectation(particles, self.options), color)
+        else:
+            for (particle, logW) in particles:
+                plot_graph(particle, color)
 
 class BootstrapFilter:
     """ Standard Bootstrap Particle Filter with No Extra Frills Added.
@@ -274,25 +427,39 @@ class BootstrapFilter:
         return self.particles
 
     def run(self):
+        i = 0
         # Initialize the particles at time 0
-        for i in range(options.N):
+        while i < options.N:
             # Generate Initial Data Uniformly throughout grid.
             particle = [self.model.prior()]
-            logWeight = model.logEvidenceWeight(particle[0], 0)
-            self.particles.append((particle, logWeight))
-        # For each time step
+            underflow, logWeight = model.logEvidenceWeight(particle[0], 0)
+            if not underflow:
+                p = (particle, logWeight)
+                self.particles.append(p)
+                i += 1
+        # For each extra time step
         for t in range(self.T-1):
+            print "t: " + str(t)
             for j in range(options.N):
                 (particle, logWeight) = self.particles[j]
                 # transition draws theta_t from the proposal distribution given
                 # theta_0,.., theta_{t-1} and z_0, ..., z_t
                 # Typically, we just choose theta_t | theta_{t-1}
+                if t >= len(particle):
+                    print "j: " + str(j)
+                    print "len(particle): " + str(len(particle))
+                    print "t: " + str(t)
+                    print "particle: " + str(particle)
+                    print "self.particles: " + str([len(p[0]) for p in
+                    self.particles])
                 theta = model.transition(particle[t])
+                pre = (len(particle))
                 particle.append(theta)
+                post = (len(particle))
                 # Assume here that the proposal distribution is the transition
                 # p(theta_t | theta_{t-1}), so we get a simple form for the weights
                 # w = p(z_t | theta_t)
-                logW = model.logEvidenceWeight(particle[t+1], t+1)
+                underflow, logW = model.logEvidenceWeight(particle[t+1], t+1)
                 logWeight += logW
                 self.particles[j] = (particle, logWeight)
             # This causes underflow especially when parameters are unknown.
@@ -320,8 +487,10 @@ def plot_graph(zs, color):
     plot.scatter(xs, ys, c=color)
     return
 
-def display_figure():
+def display_figure(options):
     global out
+    plot.xlim([options.low, options.high])
+    plot.ylim([options.low, options.high])
     plot.savefig(out)
     subprocess.call(["eog", out, "&"])
     return
@@ -333,9 +502,14 @@ if __name__ == "__main__":
         model = NoisyLinear(options)
     elif options.model == "gaussian":
         model = GaussianNoise(options)
+    elif options.model == "stochastic_volatility":
+        model = StochasticVolatility(options)
+    elif options.model == "clock_hands":
+        model = ClockHands(options)
     # Perform Inference to Gain Hidden State
-    infer = BootstrapFilter(model, options)
-    infer.run()
+    if options.plot_thetahat:
+        infer = BootstrapFilter(model, options)
+        infer.run()
     # Plot state
     if options.plot_theta:
         model.plotHidden('b')
@@ -344,4 +518,4 @@ if __name__ == "__main__":
     if options.plot_thetahat:
         model.plotParticles(infer.getParticles(), 'r')
     if options.plot_theta or options.plot_z or options.plot_thetahat:
-        display_figure()
+        display_figure(options)
