@@ -1,7 +1,6 @@
 import random
 import matplotlib.pyplot as plot
 import matplotlib.mlab as mlab
-import matplotlib.lines.Line2D as Line2D
 import subprocess
 import math
 from optparse import OptionParser
@@ -14,6 +13,7 @@ from optparse import OptionParser
     Models:
         1) Gaussian Noise
         2) Noisy Linear
+        3) Clock Hands
     Filters:
         1) BootstrapFilter
 
@@ -60,7 +60,7 @@ def parse_args():
                       type="float", default=1)
     parser.add_option("--k", dest="k",
                       help="Param: Number Hands", action="store",
-                      type="float", default=1)
+                      type="int", default=1)
     # These options provide choice of model
     parser.add_option("--model", dest="model",
                       help="noisy_linear, gaussian, stochastic_volatility",
@@ -204,6 +204,14 @@ class GaussianNoise:
             for (particle, logW) in particles:
                 plot_graph(particle, color)
 
+    def displayFigure(self, options):
+        global out
+        plot.xlim([options.low, options.high])
+        plot.ylim([options.low, options.high])
+        plot.savefig(out)
+        subprocess.call(["eog", out, "&"])
+        return
+
 class NoisyLinear:
     """ Models a linearly moving particle with gaussian noise in
         observations.
@@ -294,51 +302,124 @@ class NoisyLinear:
             for (particle, logW) in particles:
                 plot_graph(particle, color)
 
-class ClockHands:
-    """ A toy example of a model that evolves at different time scales.
-        There are k clock hands. The base of the k-th clock hand is at the
-        tip of the (k-1)st clock hand. The k-th clock hand evolves at
-        rate 10^k. That is, we expect the k-th hand to transition 10^k
-        times per second.
+    def displayFigure(self, options):
+        global out
+        plot.xlim([options.low, options.high])
+        plot.ylim([options.low, options.high])
+        plot.savefig(out)
+        subprocess.call(["eog", out, "&"])
+        return
 
-        Each hand is stored as a list of k angles, with represents the
-        angle of the k-th clock hand. The k-th clock hand is of length
-        2^-k.
+class ClockHands:
+    """ A toy example of a model that evolves at different time scales.  There
+    are k clock hands. The base of the k-th clock hand is at the tip of the
+    (k-1)st clock hand. The k-th clock hand evolves at rate 10^k. That is, we
+    expect the k-th hand to transition 10^k times per second.
+
+    Each hand is stored as a list of k angles, the ith of which represents
+    the angle of the ith clock hand.  The ith clock hand is of length 2^-i.
     """
     def __init__(self, options):
         self.options = options
         self.thetas = []
         self.zs = []
+        for i in range(options.T):
+            state = self.prior()
+            noisy = self.observe(state)
+            self.thetas.append(state)
+            self.zs.append(noisy)
+
+    def prior(self):
+        """ Choose the collection of angles randomly.
+        """
         state = [0] * options.k
         # Initialize the state to a random setting
-        for i in range(options.k):
+        k = self.options.k
+        for i in range(k):
             state[i] = random.uniform(0, 2 * math.pi)
-        self.thetas.append(state)
-    def prior(self):
-        pass
+        return state
+
+    def observe(self, state):
+        """ Given a state, get a noisy observation according to
+            the observation model, which dictates gaussian noise
+            on everything.
+        """
+        sigma = self.options.sigma
+        k = self.options.k
+        noisy = [0] * k
+        for i in range(k):
+            noisy[i] = random.gauss(state[i], sigma)
+        return noisy
+
     def transition(self, theta):
-        pass
+        """ Clocks hands are progressively more likely to transition
+            as we move further and further down the chain.
+        """
+        # Copy the state to
+        state = theta[:]
+        k = self.options.k
+        for i in range(k):
+            prob = 2 ** -(k - i)
+            u = random.random()
+            if u >= prob:
+                continue
+            state[i] = random.gauss(state[i], options.sigma)
+        return state
+
     def logEvidenceWeight(self, theta, t):
+        """ Return the log probability of the observation given
+            the hidden state theta.
+        """
         pass
+
     def plotHidden(self, color):
-        fig = plot.figure()
-        ax = fig.add_subplot(1,1,1)
+        """ Plot the time evolution of the state.
+        """
         if len(self.thetas) == 0:
             return
-        state = self.thetas[0]
+        for state in self.thetas:
+            self.plotArm(state)
+
+    def plotArm(self, state):
+        """ Plots the state as an arm in the manner described in
+            the comments for the class.
+        """
+        fig = plot.figure()
+        ax = fig.add_subplot(1,1,1)
         base = (0,0)
         for i in range(self.options.k):
             theta = state[i]
-            r = math.exp(2,-i)
+            r = 2 ** (-i)
             new_base = (base[0] + r * math.cos(theta),
                         base[1] + r * math.sin(theta))
-            ax.plot([base[0], new_base[0]], [base[1], new_base[1]])
+            xs = [base[0], new_base[0]]
+            ys = [base[1], new_base[1]]
+            ax.plot(xs, ys)
             base = new_base
 
+    def displayFigure(self, options):
+        """ Set the limits to match the known size of the clock hand.
+        """
+        global out
+        plot.xlim([-2, 2])
+        plot.ylim([-2, 2])
+        plot.savefig(out)
+        subprocess.call(["eog", out, "&"])
+        return
+
     def plotNoisy(self, color):
+        """ Plot the sequence of noisy observations of the arm.
+        """
+        for noisy in self.zs:
+            self.plotArm(noisy)
         pass
+
     def plotParticles(self, particles, color):
-        pass
+        """ For now, just plot the state of the particle at the
+            last time step.
+        """
+        for p, logw in particles:
+            self.plotArm(p[-1:])
 
 
 class StochasticVolatility:
@@ -487,13 +568,6 @@ def plot_graph(zs, color):
     plot.scatter(xs, ys, c=color)
     return
 
-def display_figure(options):
-    global out
-    plot.xlim([options.low, options.high])
-    plot.ylim([options.low, options.high])
-    plot.savefig(out)
-    subprocess.call(["eog", out, "&"])
-    return
 
 if __name__ == "__main__":
     options = parse_args()
@@ -518,4 +592,4 @@ if __name__ == "__main__":
     if options.plot_thetahat:
         model.plotParticles(infer.getParticles(), 'r')
     if options.plot_theta or options.plot_z or options.plot_thetahat:
-        display_figure(options)
+        model.displayFigure(options)
